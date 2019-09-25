@@ -25,6 +25,7 @@ import os.path
 
 from argparse import ArgumentParser
 from argparse import RawDescriptionHelpFormatter
+from decimal import Decimal, ROUND_HALF_UP
 from PyQt5.QtWidgets import QMainWindow, QAction, QApplication, QToolTip, QFileDialog
 from PyQt5.Qt import QPushButton, QWidget, QColor, QTableWidget, QTableWidgetItem,\
     QHBoxLayout, QVBoxLayout, QGroupBox
@@ -41,6 +42,8 @@ GSI_16_LEN = 24
 
 class GsiWord():
     def __init__(self, raw_word_str, widgetText):
+        self.validate_error = str("")
+        self.valid_widget_data = True
         self.raw_word_str = raw_word_str
         self.word_index = raw_word_str[0:2]
         self.sign = raw_word_str[6]
@@ -48,21 +51,48 @@ class GsiWord():
             
 
 class MeasuredData(GsiWord):
+    precision_map = {'0': 4, '6': 3, '8': 2}
+    unit_map = {4: '0', 3: '6', 2: '8'}
     def __init__(self, raw_word_str):
         self.input_mode = raw_word_str[4]
-        self.units = raw_word_str[5]
+        self.unit = raw_word_str[5]
+        self.precision = self.precision_map[self.unit]
         self.data = raw_word_str[7:23]
+        self.floatVal = float(self.getWidgetText())
+
         super().__init__(raw_word_str, self.getWidgetText())
     
     def getWidgetText(self):
-        # Last four digits are decimals        
-        formattedStr = self.data.lstrip("0")[:-4] + ',' + self.data.lstrip("0")[-4:]
+        # Last four, three or two digits are decimals depending on precision
+        formattedStr = self.data.lstrip("0")[:-self.precision] + '.' + self.data.lstrip("0")[-self.precision:]
         return formattedStr
-    
+
+    def validate(self):
+        if(len(self.widgetItem.text()) <= 1 + self.precision_map[self.unit]):
+            self.validate_error += "Value has to few numbers"
+            self.valid_widget_data = False
+            return False
+        try:
+            float(self.widgetItem.text())
+        except ValueError:
+            self.validate_error += "Value is not a decimal value"
+            self.valid_widget_data = False
+            return False
+        self.valid_widget_data = True
+        return True
+
     def encode(self):
-        gsi_word_str = self.word_index + "..16" + self.sign + \
-        self.data.zfill(16)
-        return gsi_word_str
+
+        if(self.valid_widget_data):
+            dot_index = self.widgetItem.text().find(".")
+            self.precision = len(self.widgetItem.text()) - (dot_index + 1)
+            gsi_word_str = self.word_index + "..1" + str(self.unit_map[self.precision]) + self.sign + self.data.zfill(16)
+            return gsi_word_str
+
+    def remove_decimal(self):
+        #self.no_of_decimals = self.no_of_decimals - 1
+        #self.floatVal =  round(self.floatVal, self.no_of_decimals)
+        print("Todo")
 
 class PointNumber(GsiWord):
     def __init__(self, raw_word_str):
@@ -75,13 +105,15 @@ class PointNumber(GsiWord):
     
     def set_block_number(self, block_number):
         self.block_no = block_number.zfill(4)
+
+        self.valid_widget_data = Tr
+    def validate(self):ue
+        return self.valid_widget_data
         
     def encode(self):
         gsi_word_str = self.word_index + self.block_no + self.sign + \
         self.point_id.zfill(16) 
-        return gsi_word_str   
-        
-        
+        return gsi_word_str
         
 class Attribute(GsiWord):
     def __init__(self, raw_word_str):
@@ -89,8 +121,12 @@ class Attribute(GsiWord):
         super().__init__(raw_word_str, self.getWidgetText()) 
     
     def getWidgetText(self):
-        return self.attribute_str.lstrip("0")         
-    
+        return self.attribute_str.lstrip("0")
+
+    def validate(self):
+        self.valid_widget_data = True
+        return self.valid_widget_data
+
     def encode(self):
         gsi_word_str = self.word_index + "...." + self.sign + self.attribute_str.zfill(16)
         return gsi_word_str
@@ -126,9 +162,19 @@ class GsiObject():
             return Attribute(word) 
         else:
             return None
+
+    def validate_words(self):
+        # Validate all words in GSI Object
+        validated_words = 0
+        for word in self.gsi_words:
+            if(word.validate()):
+               validated_words += 1
+        if validated_words == len(self.gsi_words):
+            return True
+        else:
+            return False
     
     def encode_to_gsi(self, block_number):
-                
         # Set correct block number in first GSI Word
         self.gsi_words[0].set_block_number(block_number)
         gsi_word_list = ["*"]
@@ -136,6 +182,12 @@ class GsiObject():
         for word in self.gsi_words:
             gsi_word_list.append(word.encode() + " ")
         return ''.join(gsi_word_list)
+
+    def remove_decimal(self):
+        for word in self.gsi_words:
+            if int(word.word_index) in range(81, 84):
+                word.remove_decimal()
+
         
 
 class CoEditorMainWin(QMainWindow):
@@ -158,10 +210,7 @@ class CoEditorMainWin(QMainWindow):
         self.openFileAct = QAction('Open File...', self)
         self.openFileAct.setToolTip("Open GSI file")
         self.openFileAct.triggered.connect(self._choose_gsi_file)
-        self.fileMenu.addAction(self.openFileAct)                     
-        
-       
-             
+        self.fileMenu.addAction(self.openFileAct)
                
         ## Add the central widget
         self.mainWidget = MainWidget(self)
@@ -196,27 +245,33 @@ class CoEditorMainWin(QMainWindow):
             self.mainWidget.fillTable(self.gsi_objects)
     
     def saveGsiFile(self):
-        # Find out path to current file
-        (current_dir, current_file) = os.path.split(self.currentFile)
-        (shortName, extension) = os.path.splitext(current_file)
-        
-        saveDir = os.path.dirname(current_dir) +"/Justerade"
-        saveFile = shortName +"_just"+ extension
-        
-        # Create Save directory (on level up)
-        if not os.path.isdir(saveDir):
-            os.makedirs(saveDir)
-        
-        fileName, _ = QFileDialog.getSaveFileName(None, "Choose data base file", os.path.join(saveDir, saveFile), "GSI files (*.gsi)")    
-        
-        gsi_string_list = list()
-        if fileName:
-            with open(fileName, "w") as targetFile:
-                for point_num, gsiObj in enumerate(self.gsi_objects):
-                    gsi_string_list.append(gsiObj.encode_to_gsi(str(point_num)))
-                
-                for line in gsi_string_list:
-                    targetFile.write(line + "\n")
+
+        # Validate all GSI Objects
+        if(self._validate_gsi_objects()):
+
+            # Find out path to current file
+            (current_dir, current_file) = os.path.split(self.currentFile)
+            (shortName, extension) = os.path.splitext(current_file)
+
+            saveDir = os.path.dirname(current_dir) +"/Justerade"
+            saveFile = shortName +"_just"+ extension
+
+            # Create Save directory (on level up)
+            if not os.path.isdir(saveDir):
+                os.makedirs(saveDir)
+
+            fileName, _ = QFileDialog.getSaveFileName(None, "Choose data base file", os.path.join(saveDir, saveFile), "GSI files (*.gsi)")
+
+            gsi_string_list = list()
+            if fileName:
+                with open(fileName, "w") as targetFile:
+                    for point_num, gsiObj in enumerate(self.gsi_objects):
+                        gsi_string_list.append(gsiObj.encode_to_gsi(str(point_num)))
+
+                    for line in gsi_string_list:
+                        targetFile.write(line + "\n")
+        else:
+            print("Error in data")
             
     def print_gsi_objects(self):
         for gsiObj in self.gsi_objects:
@@ -229,7 +284,21 @@ class CoEditorMainWin(QMainWindow):
             if gsiObj.gsi_words[0].raw_word_str == pointNoRawStr:
                 del self.gsi_objects[idx]
                 break
-            
+
+    def remove_decimals(self):
+        for idx, gsiObj in enumerate(self.gsi_objects):
+            gsiObj.remove_decimal()
+
+    def _validate_gsi_objects(self):
+        validated_objects = 0
+        for gsi_obj in self.gsi_objects:
+            if(gsi_obj.validate_words()):
+                validated_objects += 1
+        if validated_objects == len(self.gsi_objects):
+            return True
+        else:
+            return False
+
         
     
 class GsiTableWidgetItem(QTableWidgetItem): 
@@ -278,19 +347,32 @@ class MainWidget(QWidget):
 
         fileBoxLayout.addWidget(self.openFileBtn) 
         fileBoxLayout.addWidget(self.saveFileBtn)
-        fileBox.setLayout(fileBoxLayout)        
-       
-       
-        controlBoxHboxLayout = QHBoxLayout()        
+        fileBox.setLayout(fileBoxLayout)
+
+        # Measured values box
+        valueBox = QGroupBox()
+        valueBox.setTitle("Mätvärden")
+        valueBoxLayout = QVBoxLayout()
+
+        self.removeDecimalBtn = QPushButton("Ta bort en decimal")
+        self.removeDecimalBtn.setToolTip("Ta bort en decimal, avrundning sker automatiskt")
+        self.removeDecimalBtn.clicked.connect(self.remove_decimals)
+
+
+        valueBoxLayout.addWidget(self.removeDecimalBtn)
+        #valueBoxLayout.addStretch(1)
+        valueBox.setLayout(valueBoxLayout)
+
+
+        controlBoxHboxLayout = QHBoxLayout()
         controlBoxHboxLayout.addWidget(commandBox)
         controlBoxHboxLayout.addSpacing(40)
         controlBoxHboxLayout.addWidget(fileBox)
+        controlBoxHboxLayout.addSpacing(40)
+        controlBoxHboxLayout.addWidget(valueBox)
         controlBoxHboxLayout.addStretch(1)
-        mainWidgetVboxLayout.addLayout(controlBoxHboxLayout)  
-        
+        mainWidgetVboxLayout.addLayout(controlBoxHboxLayout)
 
-
-        
         # Table widget        
         self.tableWidget = QTableWidget()
         self.tableWidget.setRowCount(30)
@@ -335,6 +417,11 @@ class MainWidget(QWidget):
     def add_row(self):
         # Todo
         print("add_row")
+
+    def remove_decimals(self):
+        # Todo
+        print("remove_decimal")
+        self.parent().remove_decimals()
     
     def fillTable(self, gsi_objects):
         for idx, gsiObj in enumerate(gsi_objects):
