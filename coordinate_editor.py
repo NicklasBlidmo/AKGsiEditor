@@ -22,13 +22,12 @@ It defines classes_and_methods
 
 import sys
 import os.path
+from abc import ABC, abstractmethod
 
-from argparse import ArgumentParser
-from argparse import RawDescriptionHelpFormatter
 from decimal import Decimal, ROUND_HALF_UP
 from PyQt5.QtWidgets import QMainWindow, QAction, QApplication, QToolTip, QFileDialog
 from PyQt5.Qt import QPushButton, QWidget, QColor, QTableWidget, QTableWidgetItem,\
-    QHBoxLayout, QVBoxLayout, QGroupBox
+    QHBoxLayout, QVBoxLayout, QGroupBox, QComboBox
 from PyQt5.QtGui import QFont
 
 __all__ = []
@@ -40,105 +39,131 @@ GSI_16_LEN = 24
 
 
 
-class GsiWord():
+class GsiWord(ABC):
     def __init__(self, raw_word_str, widgetText):
         self.validate_error = str("")
         self.valid_widget_data = True
         self.raw_word_str = raw_word_str
         self.word_index = raw_word_str[0:2]
         self.sign = raw_word_str[6]
-        self.widgetItem = GsiTableWidgetItem(widgetText, raw_word_str)        
-            
+        self.value_string = widgetText
+        #self.widgetItem = GsiTableWidgetItem(widgetText, raw_word_str)
+
+    @abstractmethod
+    def _createWidgetText(self):
+        pass
+
 
 class MeasuredData(GsiWord):
-    precision_map = {'0': 4, '6': 3, '8': 2}
-    unit_map = {4: '0', 3: '6', 2: '8'}
+    precision_map = {'0': 3, '6': 4, '8': 5}
+    unit_map = {3: '0', 4: '6', 5: '8'}
     def __init__(self, raw_word_str):
         self.input_mode = raw_word_str[4]
         self.unit = raw_word_str[5]
         self.precision = self.precision_map[self.unit]
         self.data = raw_word_str[7:23]
-        self.floatVal = float(self.getWidgetText())
-
-        super().__init__(raw_word_str, self.getWidgetText())
+        super().__init__(raw_word_str, self._createWidgetText())
     
-    def getWidgetText(self):
+    def _createWidgetText(self):
         # Last four, three or two digits are decimals depending on precision
         formattedStr = self.data.lstrip("0")[:-self.precision] + '.' + self.data.lstrip("0")[-self.precision:]
         return formattedStr
 
-    def validate(self):
-        if(len(self.widgetItem.text()) <= 1 + self.precision_map[self.unit]):
-            self.validate_error += "Value has to few numbers"
-            self.valid_widget_data = False
+    @classmethod
+    def validate(cls, val_str, unit):
+        if len(val_str) <= 1 + unit:
+            validate_error = str("Value has to few numbers")
             return False
         try:
-            float(self.widgetItem.text())
+            float(val_str)
         except ValueError:
-            self.validate_error += "Value is not a decimal value"
-            self.valid_widget_data = False
+            validate_error = str("Value is not a decimal value")
             return False
-        self.valid_widget_data = True
         return True
 
-    def encode(self):
+    @classmethod
+    def encode(cls, word_str, word_index):
+        dot_index = word_str.find(".")
+        precision = len(word_str) - (dot_index + 1)
+        # Check if negative or positive value
+        if "-" in word_str:
+            sign = "-"
+        else:
+            sign = "+"
 
-        if(self.valid_widget_data):
-            dot_index = self.widgetItem.text().find(".")
-            self.precision = len(self.widgetItem.text()) - (dot_index + 1)
-            gsi_word_str = self.word_index + "..1" + str(self.unit_map[self.precision]) + self.sign + self.data.zfill(16)
-            return gsi_word_str
+        data_string = word_str.replace('.', '')
 
-    def remove_decimal(self):
-        #self.no_of_decimals = self.no_of_decimals - 1
-        #self.floatVal =  round(self.floatVal, self.no_of_decimals)
-        print("Todo")
+        gsi_word_str = word_index + "..1" + cls.unit_map[precision] + sign + data_string.zfill(16)
+        return gsi_word_str
+
+    def set_precision(self, precision):
+        if precision == "0.001":
+            self.precision = 3
+        elif precision == "0.0001":
+            self.precision = 4
+        else:
+            self.precision = 5
+        current_value = Decimal(float(self.widgetItem.text()))
+        new_value = Decimal(current_value.quantize(Decimal(precision), rounding=ROUND_HALF_UP))
+        self.widgetItem.setText(str(new_value))
 
 class PointNumber(GsiWord):
+    word_index = "11"
     def __init__(self, raw_word_str):
         self.block_no = raw_word_str[2:6]
         self.point_id = raw_word_str[7:23]
-        super().__init__(raw_word_str, self.getWidgetText())
+        self.value_string = self._createWidgetText()
+        super().__init__(raw_word_str, self._createWidgetText())
         
-    def getWidgetText(self):
+    def _createWidgetText(self):
         return self.point_id.lstrip("0")
     
     def set_block_number(self, block_number):
         self.block_no = block_number.zfill(4)
 
-        self.valid_widget_data = Tr
-    def validate(self):ue
-        return self.valid_widget_data
-        
-    def encode(self):
-        gsi_word_str = self.word_index + self.block_no + self.sign + \
-        self.point_id.zfill(16) 
+    @classmethod
+    def validate(cls, val_str):
+        return True
+
+    @classmethod
+    def encode(cls, word_str, block_no):
+        # ToDo Is it always positive?
+        sign = "+"
+        gsi_word_str = cls.word_index + str(block_no + 1).zfill(4) + sign + \
+        word_str.zfill(16)
         return gsi_word_str
         
 class Attribute(GsiWord):
     def __init__(self, raw_word_str):
         self.attribute_str = raw_word_str[7:23]
-        super().__init__(raw_word_str, self.getWidgetText()) 
+        self.value_string = self._createWidgetText()
+        super().__init__(raw_word_str, self._createWidgetText())
     
-    def getWidgetText(self):
+    def _createWidgetText(self):
         return self.attribute_str.lstrip("0")
 
-    def validate(self):
-        self.valid_widget_data = True
-        return self.valid_widget_data
+    @classmethod
+    def validate(cls, val_str):
+        return True
 
-    def encode(self):
-        gsi_word_str = self.word_index + "...." + self.sign + self.attribute_str.zfill(16)
+    @classmethod
+    def encode(cls, str, word_index):
+        if str.startswith("-"):
+            sign = "-"
+        else:
+            sign = "+"
+        gsi_word_str = word_index + "...." + sign + str.zfill(16)
         return gsi_word_str
         
 class GsiObject():
     gsi_word_index = {'11': '0', '81': '1', '82': '2', '83': '3', '72': '4',\
-                       '73': '5', '74': '6', '75': '7'} 
+                       '73': '5', '74': '6', '75': '7'}
+
+    measured_data_wi = {1: '81', 2: '82', 3: '83', 4: '72', 5: '73', 6: '74', 7: '75'}
     
     def __init__(self, raw_string):
         self.raw_string = raw_string
-        self.gsi_words = self.create_gsi_words()        
-        
+        self.gsi_words = self.create_gsi_words()
         
     def create_gsi_words(self):
         if(self.raw_string[0] != "*"):
@@ -163,30 +188,47 @@ class GsiObject():
         else:
             return None
 
-    def validate_words(self):
+    @classmethod
+    def validate_words(cls, gsi_words, unit):
         # Validate all words in GSI Object
         validated_words = 0
-        for word in self.gsi_words:
-            if(word.validate()):
+        for col_number, word in enumerate(gsi_words):
+            if col_number == 0:
+                validated = PointNumber.validate(word)
+            elif 0 < col_number <= 3:
+                validated = MeasuredData.validate(word, unit)
+            else:
+                validated = Attribute.validate(word)
+            if(validated):
                validated_words += 1
-        if validated_words == len(self.gsi_words):
+
+        if validated_words == len(gsi_words):
             return True
         else:
             return False
-    
-    def encode_to_gsi(self, block_number):
+
+    @classmethod
+    def encode_to_gsi(self, gsi_words, row):
         # Set correct block number in first GSI Word
-        self.gsi_words[0].set_block_number(block_number)
         gsi_word_list = ["*"]
         # Then decode word for word
-        for word in self.gsi_words:
-            gsi_word_list.append(word.encode() + " ")
+        for col_number, word in enumerate(gsi_words):
+            word_str = str()
+            if col_number == 0:
+                # Set correct block number (row number) in first GSI Word
+                word_str = PointNumber.encode(word, row)
+            elif 0 < col_number <= 3:
+                word_str = MeasuredData.encode(word, self.measured_data_wi[col_number])
+            else:
+                word_str = Attribute.encode(word, self.measured_data_wi[col_number])
+
+            gsi_word_list.append( word_str  + " ")
         return ''.join(gsi_word_list)
 
-    def remove_decimal(self):
+    def set_precision(self, precision):
         for word in self.gsi_words:
             if int(word.word_index) in range(81, 84):
-                word.remove_decimal()
+                word.set_precision(precision)
 
         
 
@@ -197,6 +239,7 @@ class CoEditorMainWin(QMainWindow):
         self.currentFile = None
         self.gsi_objects = list()
         self.initUI()
+        self.precision = 3
        
     def closeEvent(self, event):     
         event.accept()        
@@ -235,19 +278,20 @@ class CoEditorMainWin(QMainWindow):
         if(len(self.currentFile) != 0):
             print(self.currentFile)           
         
-            coordinate_list = list()             
-            
+            coordinate_list = list()
+            self.gsi_objects.clear()
             with open(self.currentFile, "r") as gsiFile:
                 allLines = gsiFile.readlines()
                 for line in allLines:
                     coordinate_list.append(line.split())
-                    self.gsi_objects.append(GsiObject(line))            
+                    self.gsi_objects.append(GsiObject(line))
+            self.mainWidget.clearTable()
             self.mainWidget.fillTable(self.gsi_objects)
     
     def saveGsiFile(self):
 
         # Validate all GSI Objects
-        if(self._validate_gsi_objects()):
+        if self._validate_gsi_objects():
 
             # Find out path to current file
             (current_dir, current_file) = os.path.split(self.currentFile)
@@ -265,8 +309,11 @@ class CoEditorMainWin(QMainWindow):
             gsi_string_list = list()
             if fileName:
                 with open(fileName, "w") as targetFile:
-                    for point_num, gsiObj in enumerate(self.gsi_objects):
-                        gsi_string_list.append(gsiObj.encode_to_gsi(str(point_num)))
+                    for row in range (0, self.mainWidget.tableWidget.rowCount()):
+                        gsi_word_list = list()
+                        for column in range (self.mainWidget.tableWidget.columnCount()):
+                            gsi_word_list.append(self.mainWidget.tableWidget.item(row, column).text())
+                        gsi_string_list.append(GsiObject.encode_to_gsi(gsi_word_list, row))
 
                     for line in gsi_string_list:
                         targetFile.write(line + "\n")
@@ -276,8 +323,8 @@ class CoEditorMainWin(QMainWindow):
     def print_gsi_objects(self):
         for gsiObj in self.gsi_objects:
             for word in gsiObj.gsi_words:
-                if len(word.widgetItem.text()) != 0:
-                    print(word.widgetItem.text())
+                if len(word.value_string) != 0:
+                    print(word.value_string)
                     
     def remove_gsi_object(self, pointNoRawStr):
         for idx, gsiObj in enumerate(self.gsi_objects):
@@ -285,30 +332,33 @@ class CoEditorMainWin(QMainWindow):
                 del self.gsi_objects[idx]
                 break
 
-    def remove_decimals(self):
-        for idx, gsiObj in enumerate(self.gsi_objects):
-            gsiObj.remove_decimal()
-
     def _validate_gsi_objects(self):
         validated_objects = 0
-        for gsi_obj in self.gsi_objects:
-            if(gsi_obj.validate_words()):
+        # Validate line for line
+        for row in range(0, self.mainWidget.tableWidget.rowCount()):
+            gsi_word_list = list()
+            for column in range(self.mainWidget.tableWidget.columnCount()):
+                gsi_word_list.append(self.mainWidget.tableWidget.item(row, column).text())
+            if GsiObject.validate_words(gsi_word_list, self.precision):
                 validated_objects += 1
-        if validated_objects == len(self.gsi_objects):
+
+        if validated_objects == self.mainWidget.tableWidget.rowCount():
             return True
         else:
             return False
 
         
     
-class GsiTableWidgetItem(QTableWidgetItem): 
-    def __init__(self, valueStr, raw_word_str): 
-        self.raw_word_str = raw_word_str
-        super().__init__(valueStr)
+# class GsiTableWidgetItem(QTableWidgetItem):
+#     def __init__(self, valueStr, raw_word_str):
+#         self.raw_word_str = raw_word_str
+#         super().__init__(valueStr)
 
 
 class MainWidget(QWidget):
-    
+    precision_list = ["0.001", "0.0001", "0.00001"]
+    precision_strs = {3: "0.001", 4: "0.0001", 5: "0.00001"}
+
     def __init__(self, parent):
         super(MainWidget, self).__init__(parent)
         self.initUI() 
@@ -349,19 +399,18 @@ class MainWidget(QWidget):
         fileBoxLayout.addWidget(self.saveFileBtn)
         fileBox.setLayout(fileBoxLayout)
 
-        # Measured values box
-        valueBox = QGroupBox()
-        valueBox.setTitle("Mätvärden")
-        valueBoxLayout = QVBoxLayout()
+        # Settings box
+        precisionBox = QGroupBox()
+        precisionBox.setTitle("Ändra Precision")
+        precisionBoxLayout = QVBoxLayout()
 
-        self.removeDecimalBtn = QPushButton("Ta bort en decimal")
-        self.removeDecimalBtn.setToolTip("Ta bort en decimal, avrundning sker automatiskt")
-        self.removeDecimalBtn.clicked.connect(self.remove_decimals)
+        self.precisionCombo = QComboBox()
+        self.precisionCombo.addItems(self.precision_list)
 
-
-        valueBoxLayout.addWidget(self.removeDecimalBtn)
+        precisionBoxLayout.addWidget(self.precisionCombo)
         #valueBoxLayout.addStretch(1)
-        valueBox.setLayout(valueBoxLayout)
+        precisionBox.setLayout(precisionBoxLayout)
+        self.precisionCombo.activated[str].connect(self.set_precision)
 
 
         controlBoxHboxLayout = QHBoxLayout()
@@ -369,7 +418,7 @@ class MainWidget(QWidget):
         controlBoxHboxLayout.addSpacing(40)
         controlBoxHboxLayout.addWidget(fileBox)
         controlBoxHboxLayout.addSpacing(40)
-        controlBoxHboxLayout.addWidget(valueBox)
+        controlBoxHboxLayout.addWidget(precisionBox)
         controlBoxHboxLayout.addStretch(1)
         mainWidgetVboxLayout.addLayout(controlBoxHboxLayout)
 
@@ -410,31 +459,48 @@ class MainWidget(QWidget):
         rows = self.tableWidget.selectionModel().selectedRows()
         if len(rows) != 0:
             for selRow in rows:
-                pointNoRawStr = self.tableWidget.item(selRow.row(), 0).raw_word_str
-                self.parent().remove_gsi_object(pointNoRawStr)
+                #pointNoRawStr = self.tableWidget.item(selRow.row(), 0).raw_word_str
+                #self.parent().remove_gsi_object(pointNoRawStr)
                 self.tableWidget.removeRow(selRow.row())
     
     def add_row(self):
-        # Todo
-        print("add_row")
+        rows = self.tableWidget.selectionModel().selectedRows()
+        if len(rows) != 0:
+            self.tableWidget.insertRow(rows[0].row())
+        else:
+            self.tableWidget.insertRow(self.tableWidget.rowCount())
 
-    def remove_decimals(self):
-        # Todo
-        print("remove_decimal")
-        self.parent().remove_decimals()
-    
+    def clearTable(self):
+        for i in reversed(range(self.tableWidget.rowCount())):
+            self.tableWidget.removeRow(i)
+
+
     def fillTable(self, gsi_objects):
+        precision_val = 3
+        self.tableWidget.setRowCount(len(gsi_objects))
         for idx, gsiObj in enumerate(gsi_objects):
-            for posIdx, word in enumerate(gsiObj.gsi_words):                
-                self.tableWidget.setItem(idx, posIdx, word.widgetItem)
+            for posIdx, word in enumerate(gsiObj.gsi_words):
+                # Create new Item here
+                self.tableWidget.setItem(idx, posIdx, QTableWidgetItem(word.value_string))
+                if idx == 0 and word.word_index == "81":
+                    precision_val = word.precision
+                    self.parent().precision = precision_val
+
+        # Set precision value in combobox
+        self.precisionCombo.setCurrentText(self.precision_strs[precision_val])
                 
     def _print_widget_content(self):
         for idx in range(0, self.tableWidget.rowCount() -2):
             for posIdx in range(0, self.tableWidget.columnCount()-1):     
                 if len(self.tableWidget.item(idx, posIdx).text()) != 0:
                     print(self.tableWidget.item(idx, posIdx).text())
-        
 
+    def set_precision(self, precision):
+        for row in range(self.tableWidget.rowCount()):
+            for column in range(1, 4):
+                current_value = Decimal(float(self.tableWidget.item(row, column).text()))
+                new_value = Decimal(current_value.quantize(Decimal(precision), rounding=ROUND_HALF_UP))
+                self.tableWidget.item(row, column).setText(str(new_value))
         
 if __name__ == "__main__":
     app = QApplication(sys.argv)
