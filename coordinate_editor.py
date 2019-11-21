@@ -66,8 +66,10 @@ class MeasuredData(GsiWord):
     
     def _createWidgetText(self):
         # Last four, three or two digits are decimals depending on precision
-        formattedStr = self.data.lstrip("0")[:-self.precision] + '.' + self.data.lstrip("0")[-self.precision:]
-        return formattedStr
+        formatted_str = self.data.lstrip("0")[:-self.precision] + '.' + self.data.lstrip("0")[-self.precision:]
+        if len(self.data.lstrip("0")[:-self.precision]) == 0:
+            formatted_str = "0" + formatted_str
+        return formatted_str
 
     @classmethod
     def validate(cls, val_str, unit):
@@ -338,9 +340,13 @@ class CoEditorMainWin(QMainWindow):
         for row in range(0, self.mainWidget.tableWidget.rowCount()):
             gsi_word_list = list()
             for column in range(self.mainWidget.tableWidget.columnCount()):
-                gsi_word_list.append(self.mainWidget.tableWidget.item(row, column).text())
-            if GsiObject.validate_words(gsi_word_list, self.precision):
-                validated_objects += 1
+                if self.mainWidget.tableWidget.item(row, column) and self.mainWidget.tableWidget.item(row, column).text():
+                    gsi_word_list.append(self.mainWidget.tableWidget.item(row, column).text())
+                else:
+                    gsi_word_list.append("")
+            if len(gsi_word_list) == 8:
+                if GsiObject.validate_words(gsi_word_list, self.precision):
+                    validated_objects += 1
 
         if validated_objects == self.mainWidget.tableWidget.rowCount():
             return True
@@ -486,6 +492,9 @@ class MainWidget(QWidget):
                     precision_val = word.precision
                     self.parent().precision = precision_val
 
+        self.set_precision(self.precision_strs[self.parent().precision])
+
+
         # Set precision value in combobox
         self.precisionCombo.setCurrentText(self.precision_strs[precision_val])
                 
@@ -501,6 +510,7 @@ class MainWidget(QWidget):
                 current_value = Decimal(float(self.tableWidget.item(row, column).text()))
                 new_value = Decimal(current_value.quantize(Decimal(precision), rounding=ROUND_HALF_UP))
                 self.tableWidget.item(row, column).setText(str(new_value))
+                self.parent().precision = len(precision.split(".")[1])
         
 if __name__ == "__main__":
     app = QApplication(sys.argv)
