@@ -1,85 +1,148 @@
-'''
-coordinate_editor -- shortdesc
-
-coordinate_editor is a description
-
-It defines classes_and_methods
-
-@author:     user_name
-
-@copyright:  2018 organization_name. All rights reserved.
-
-@license:    license
-
-@contact:    user_email
-@deffield    updated: Updated
-'''
-
-# GSI 16 word format
-#*110001+000RTCM-Ref 0454 81...6+0000006742974308 82...6+0000065558922759 83...6+0000000000436354 72....+0000000000000000 73....+0000000000000000 74....+0000000000000000 75....+0000000000000000 
-#*110002+0000000000020363 81...6+0000006774180503 82...6+0000065560868658 83...6+0000000000256145 72....+0000000000002022 73....+00000000000000KN 74....+0000000000000001 75....+0000000000000000 
+0000
 
 
 import sys
 import os.path
-from abc import ABC, abstractmethod
-
+import functools
 from decimal import Decimal, ROUND_HALF_UP
-from PyQt5.QtWidgets import QMainWindow, QAction, QApplication, QToolTip, QFileDialog
+from PyQt5.QtWidgets import QMainWindow, QAction, QApplication, QToolTip, QFileDialog, QMessageBox, QLabel
 from PyQt5.Qt import QPushButton, QWidget, QColor, QTableWidget, QTableWidgetItem,\
-    QHBoxLayout, QVBoxLayout, QGroupBox, QComboBox
-from PyQt5.QtGui import QFont
+    QHBoxLayout, QVBoxLayout, QGroupBox, QComboBox, QGridLayout
+
+from PyQt5.QtCore import Qt
+from PyQt5.QtGui import QFont, QKeySequence
 
 __all__ = []
-__version__ = 0.1
+__version__ = 0.2
 __date__ = '2018-09-27'
-__updated__ = '2018-09-27'
+__updated__ = '2020-10-02'
+
+
+# GSI 16 word format
+#*110001+000RTCM-Ref 0454 81...6+0000006742974308 82...6+0000065558922759 83...6+0000000000436354 72....+0000000000000000 73....+0000000000000000 74....+0000000000000000 75....+0000000000000000
+#*110002+0000000000020363 81...6+0000006774180503 82...6+0000065560868658 83...6+0000000000256145 72....+0000000000002022 73....+00000000000000KN 74....+0000000000000001 75....+000000000000
 
 GSI_16_LEN = 24
 
+class GsiTableWidget(QTableWidget):
+    def __init__(self, parent):
+        QTableWidget.__init__(self , parent)
+
+    def keyPressEvent(self, event):
+        # One or more rows selected
+        selectedRows = self.selectionModel().selectedRows()
+        if len(selectedRows) != 0:
+            if event.key() == Qt.Key_Insert and event.modifiers() != Qt.ShiftModifier:
+                self.model().insertRows(selectedRows[0].row(), len(selectedRows))
+                self.insertRows(selectedRows[0].row(), len(selectedRows))
+                return
+            elif event.key() == Qt.Key_Insert and event.modifiers() == Qt.ShiftModifier:
+                self.model().insertRows(selectedRows[0].row()+1, len(selectedRows))
+                self.insertRows(selectedRows[0].row()+1, len(selectedRows))
+                return
+            if event.key() == Qt.Key_Delete:
+                for selRow in reversed(selectedRows):
+                    self.model().removeRow(selRow.row())
+                return
+        # Insert row at the end
+        else:
+            if event.key() == Qt.Key_Insert:
+                self.model().insertRows(self.model().rowCount(), 1)
+                self.insertRows(self.model().rowCount(), 1)
+                return
+
+        # One or more cells are selected
+        if self.selectedIndexes():
+            if event.key() == Qt.Key_Delete:
+                for index in self.selectedIndexes():
+                    self.model().setData(index, "")
+
+            if QKeySequence(event.key()+int(event.modifiers())) == QKeySequence("Ctrl+C"):
+                text = ""
+                top = self.selectionModel().selection().first().top()
+                bottom = self.selectionModel().selection().first().bottom()
+                left = self.selectionModel().selection().first().left()
+                right = self.selectionModel().selection().first().right()
+
+                for i in range(top, bottom +1):
+                    rowContents = []
+                    for j in range(left, right +1):
+                        cellStr = self.model().index(i,j).data()
+                        rowContents.append(cellStr)
+                    row = "\t"
+                    row = row.join(rowContents)
+                    text += row + "\n"
+                QApplication.clipboard().setText(text)
+
+            if QKeySequence(event.key() + int(event.modifiers())) == QKeySequence("Ctrl+V"):
+                text = QApplication.clipboard().text()
+                rowList = [x for x in text.split("\n") if x != '']
+
+                selected = self.selectedIndexes()[0]
+                initRow = selected.row()
+                initColumn = selected.column()
+
+                for i in range(len(rowList)):
+                    columnList = rowList[i].split("\t")
+                    for j in range(len(columnList)):
+                        self.model().setData(self.model().index(initRow+i, initColumn+j),columnList[j])
+
+    def insertRows(self, row, count):
+        for rowNr in range(count):
+            for column in range(8):
+                if column is 0:
+                    self.setItem(row + rowNr, column, PointNumber())
+                elif column in range(1,4):
+                    self.setItem(row + rowNr, column, MeasuredData())
+                elif column in range(4,8):
+                    self.setItem(row + rowNr, column, Attribute())
 
 
-class GsiWord(ABC):
+class GsiWord(QTableWidgetItem):
     def __init__(self, raw_word_str, widgetText):
-        self.validate_error = str("")
-        self.valid_widget_data = True
-        self.raw_word_str = raw_word_str
-        self.word_index = raw_word_str[0:2]
-        self.sign = raw_word_str[6]
-        self.value_string = widgetText
-        #self.widgetItem = GsiTableWidgetItem(widgetText, raw_word_str)
-
-    @abstractmethod
-    def _createWidgetText(self):
-        pass
+        if widgetText is not "":
+            self.validate_error = str("")
+            self.valid_widget_data = True
+            self.raw_word_str = raw_word_str
+            self.word_index = raw_word_str[0:2]
+            self.sign = raw_word_str[6]
+            if self.sign == "-":
+                self.value_string = self.sign + widgetText
+            else:
+                self.value_string = widgetText
+        else:
+            self.value_string = widgetText
+        super().__init__(self.value_string)
 
 
 class MeasuredData(GsiWord):
     precision_map = {'0': 3, '6': 4, '8': 5}
     unit_map = {3: '0', 4: '6', 5: '8'}
-    def __init__(self, raw_word_str):
-        self.input_mode = raw_word_str[4]
-        self.unit = raw_word_str[5]
-        self.precision = self.precision_map[self.unit]
-        self.data = raw_word_str[7:23]
-        super().__init__(raw_word_str, self._createWidgetText())
+    def __init__(self, raw_word_str = ""):
+        if raw_word_str is not "":
+            self.input_mode = raw_word_str[4]
+            self.unit = raw_word_str[5]
+            self.precision = self.precision_map[self.unit]
+            self.data = raw_word_str[7:23]
+            super().__init__(raw_word_str, self._create_widgettext())
+        else:
+            super().__init__(raw_word_str, raw_word_str)
     
-    def _createWidgetText(self):
+    def _create_widgettext(self):
         # Last four, three or two digits are decimals depending on precision
         formatted_str = self.data.lstrip("0")[:-self.precision] + '.' + self.data.lstrip("0")[-self.precision:]
         if len(self.data.lstrip("0")[:-self.precision]) == 0:
             formatted_str = "0" + formatted_str
         return formatted_str
 
-    @classmethod
-    def validate(cls, val_str, unit):
-        if len(val_str) <= 1 + unit:
-            validate_error = str("Value has to few numbers")
+    def validate(self):
+        if len(self.text()) <= 1 + self.precision:
+            # ToDo validate_error = str("Value has to few numbers")
             return False
         try:
-            float(val_str)
+            float(super().text())
         except ValueError:
-            validate_error = str("Value is not a decimal value")
+            # ToDo validate_error = str("Value is not a decimal value")
             return False
         return True
 
@@ -93,7 +156,8 @@ class MeasuredData(GsiWord):
         else:
             sign = "+"
 
-        data_string = word_str.replace('.', '')
+        data_string = word_str.replace('.', '').replace('-','')
+
 
         gsi_word_str = word_index + "..1" + cls.unit_map[precision] + sign + data_string.zfill(16)
         return gsi_word_str
@@ -105,27 +169,38 @@ class MeasuredData(GsiWord):
             self.precision = 4
         else:
             self.precision = 5
-        current_value = Decimal(float(self.widgetItem.text()))
-        new_value = Decimal(current_value.quantize(Decimal(precision), rounding=ROUND_HALF_UP))
-        self.widgetItem.setText(str(new_value))
+
+        if self.text() != "":
+
+            try:
+                float(super().text())
+            except ValueError:
+                return
+
+            current_value = Decimal(float(self.text()))
+            new_value = Decimal(current_value.quantize(Decimal(precision), rounding=ROUND_HALF_UP))
+            self.setText(str(new_value))
 
 class PointNumber(GsiWord):
     word_index = "11"
-    def __init__(self, raw_word_str):
-        self.block_no = raw_word_str[2:6]
-        self.point_id = raw_word_str[7:23]
-        self.value_string = self._createWidgetText()
-        super().__init__(raw_word_str, self._createWidgetText())
+    def __init__(self, raw_word_str = ""):
+        if raw_word_str is not "":
+            self.block_no = raw_word_str[2:6]
+            self.point_id = raw_word_str[7:23]
+            self.value_string = self._create_widgettext()
+            super().__init__(raw_word_str, self._create_widgettext())
+        else:
+            super().__init__(raw_word_str, raw_word_str)
         
-    def _createWidgetText(self):
+    def _create_widgettext(self):
         return self.point_id.lstrip("0")
     
     def set_block_number(self, block_number):
         self.block_no = block_number.zfill(4)
 
-    @classmethod
-    def validate(cls, val_str):
-        return True
+    def validate(self):
+        return len(self.text()) != 0
+
 
     @classmethod
     def encode(cls, word_str, block_no):
@@ -136,16 +211,18 @@ class PointNumber(GsiWord):
         return gsi_word_str
         
 class Attribute(GsiWord):
-    def __init__(self, raw_word_str):
-        self.attribute_str = raw_word_str[7:23]
-        self.value_string = self._createWidgetText()
-        super().__init__(raw_word_str, self._createWidgetText())
+    def __init__(self, raw_word_str = ""):
+        if raw_word_str is not "":
+            self.attribute_str = raw_word_str[7:23]
+            self.value_string = self._create_widgettext()
+            super().__init__(raw_word_str, self._create_widgettext())
+        else:
+            super().__init__(raw_word_str, raw_word_str)
     
-    def _createWidgetText(self):
+    def _create_widgettext(self):
         return self.attribute_str.lstrip("0")
 
-    @classmethod
-    def validate(cls, val_str):
+    def validate(self):
         return True
 
     @classmethod
@@ -235,7 +312,7 @@ class GsiObject():
         
 
 class CoEditorMainWin(QMainWindow):
-    
+    precision_strs = {3: "0.001", 4: "0.0001", 5: "0.00001"}
     def __init__(self):
         super().__init__() 
         self.currentFile = None
@@ -256,22 +333,18 @@ class CoEditorMainWin(QMainWindow):
         self.openFileAct.setToolTip("Open GSI file")
         self.openFileAct.triggered.connect(self._choose_gsi_file)
         self.fileMenu.addAction(self.openFileAct)
+
+        self.saveFileAct = QAction('Save File...', self)
+        self.saveFileAct.setToolTip("Save File in GSI 16 format")
+        self.saveFileAct.triggered.connect(self.saveGsiFile)
+        self.fileMenu.addAction(self.saveFileAct)
                
         ## Add the central widget
         self.mainWidget = MainWidget(self)
         self.setCentralWidget(self.mainWidget)              
         
-        self.setGeometry(300, 300, 1240, 600)
-        self.setWindowTitle('AK GSI Editor')    
-        
-        self.printFileAct = QAction('Print content...', self)
-        self.printFileAct.triggered.connect(self.mainWidget._print_widget_content)
-        self.fileMenu.addAction(self.printFileAct)  
-        
-        self.printGsiObj = QAction('Print objects...', self)
-        self.printGsiObj.triggered.connect(self.print_gsi_objects)
-        self.fileMenu.addAction(self.printGsiObj)  
-            
+        self.setGeometry(300, 300, 1220, 600)
+        self.setWindowTitle('AK GSI-16 Editor - ' + str(__version__))
         
         self.show()
     
@@ -287,8 +360,18 @@ class CoEditorMainWin(QMainWindow):
                 for line in allLines:
                     coordinate_list.append(line.split())
                     self.gsi_objects.append(GsiObject(line))
+
+            # Get current precision from first GSI object first Measured Data word
+            self.precision = self.gsi_objects[0].gsi_words[1].precision
+
+            # Update GUI
             self.mainWidget.clearTable()
             self.mainWidget.fillTable(self.gsi_objects)
+            # Set precision value in combobox in MainWindow
+            self.mainWidget.precisionCombo.setCurrentText(self.precision_strs[self.precision])
+            self.mainWidget.precisionCombo.setEnabled(True)
+            self.mainWidget.validate_values_btn.setEnabled(True)
+
     
     def saveGsiFile(self):
 
@@ -299,10 +382,10 @@ class CoEditorMainWin(QMainWindow):
             (current_dir, current_file) = os.path.split(self.currentFile)
             (shortName, extension) = os.path.splitext(current_file)
 
-            saveDir = os.path.dirname(current_dir) +"/Justerade"
-            saveFile = shortName +"_just"+ extension
+            saveDir = current_dir
+            saveFile = shortName + extension
 
-            # Create Save directory (on level up)
+            # Create Save directory
             if not os.path.isdir(saveDir):
                 os.makedirs(saveDir)
 
@@ -334,36 +417,48 @@ class CoEditorMainWin(QMainWindow):
                 del self.gsi_objects[idx]
                 break
 
-    def _validate_gsi_objects(self):
+    def _validate_gsi_objects(self, create_ok_box = False):
         validated_objects = 0
+        invalid_objects = []
+        # Make sure user added values have precision set
+        self.mainWidget.set_precision(self.mainWidget.precisionCombo.currentText())
         # Validate line for line
         for row in range(0, self.mainWidget.tableWidget.rowCount()):
-            gsi_word_list = list()
-            for column in range(self.mainWidget.tableWidget.columnCount()):
+            for column in range(0,4): # Don't validate the Attributes or code
                 if self.mainWidget.tableWidget.item(row, column) and self.mainWidget.tableWidget.item(row, column).text():
-                    gsi_word_list.append(self.mainWidget.tableWidget.item(row, column).text())
+                    if self.mainWidget.tableWidget.item(row, column).validate():
+                        validated_objects += 1
+                    else:
+                        invalid_objects.append("row: " + str(row) + " column: " + str(column))
                 else:
-                    gsi_word_list.append("")
-            if len(gsi_word_list) == 8:
-                if GsiObject.validate_words(gsi_word_list, self.precision):
-                    validated_objects += 1
+                    invalid_objects.append("row: " + str(row) + " column: " + str(column))
+            # Attributes are always valid
+            for column in range(5,9):
+                validated_objects += 1
 
-        if validated_objects == self.mainWidget.tableWidget.rowCount():
-            return True
+        if validated_objects == self.mainWidget.tableWidget.rowCount() * self.mainWidget.tableWidget.columnCount():
+            if create_ok_box:
+                msg = QMessageBox()
+                msg.setWindowTitle("Validation Result")
+                msg.setText("All Cells are valid")
+                msg.exec_()
+            else:
+                return True
         else:
+            # Create Messagebox
+            msg = QMessageBox()
+            msg.setWindowTitle("Invalid entries found")
+            textMessage = "Following cells have incorrect values:\n"
+            for cell in invalid_objects:
+                textMessage = textMessage + cell + "\n"
+            msg.setText(textMessage)
+            msg.setIcon(QMessageBox.Critical)
+            msg.exec_()
             return False
-
-        
-    
-# class GsiTableWidgetItem(QTableWidgetItem):
-#     def __init__(self, valueStr, raw_word_str):
-#         self.raw_word_str = raw_word_str
-#         super().__init__(valueStr)
 
 
 class MainWidget(QWidget):
     precision_list = ["0.001", "0.0001", "0.00001"]
-    precision_strs = {3: "0.001", 4: "0.0001", 5: "0.00001"}
 
     def __init__(self, parent):
         super(MainWidget, self).__init__(parent)
@@ -372,32 +467,16 @@ class MainWidget(QWidget):
     def initUI(self):
         
         mainWidgetVboxLayout = QVBoxLayout()
-        
-        # Row Buttons
-        commandBox  = QGroupBox()
-        commandBox.setTitle("Radoperationer")
-        commandLayout = QVBoxLayout()
-        
-        self.addNewRowBtn = QPushButton("Lägg till rad")
-        self.delNewRowBtn = QPushButton("Ta bort rad")         
-        self.addNewRowBtn.setToolTip("Lägg till en ny rad")
-        self.delNewRowBtn.setToolTip("Radera valda rader")
-        self.addNewRowBtn.clicked.connect(self.add_row)
-        self.delNewRowBtn.clicked.connect(self.delete_row)
 
-        commandLayout.addWidget(self.addNewRowBtn) 
-        commandLayout.addWidget(self.delNewRowBtn)
-        commandBox.setLayout(commandLayout)        
-        
         # File buttons
         fileBox  = QGroupBox()
-        fileBox.setTitle("Filoperationer")
+        fileBox.setTitle("File...")
         fileBoxLayout = QVBoxLayout()
         
-        self.openFileBtn = QPushButton("Öppna fil")
-        self.saveFileBtn = QPushButton("Spara fil")         
-        self.openFileBtn.setToolTip("Öppna en ny GSI-fil")
-        self.saveFileBtn.setToolTip("Spara som en ny GSI-fil")
+        self.openFileBtn = QPushButton("Open file")
+        self.saveFileBtn = QPushButton("Save file")
+        self.openFileBtn.setToolTip("Open a GSI-16 file")
+        self.saveFileBtn.setToolTip("Save as new GSI-16 file")
         self.openFileBtn.clicked.connect(self.parent()._choose_gsi_file)
         self.saveFileBtn.clicked.connect(self.parent().saveGsiFile)
 
@@ -405,32 +484,42 @@ class MainWidget(QWidget):
         fileBoxLayout.addWidget(self.saveFileBtn)
         fileBox.setLayout(fileBoxLayout)
 
-        # Settings box
-        precisionBox = QGroupBox()
-        precisionBox.setTitle("Ändra Precision")
-        precisionBoxLayout = QVBoxLayout()
+        # Tools box
+        tools_box = QGroupBox()
+        tools_box.setTitle("Tools")
+        tools_box_layout = QGridLayout()
+
+        label_validate = QLabel("Validate values")
+        tools_box_layout.addWidget(label_validate, 0, 0)
 
         self.precisionCombo = QComboBox()
         self.precisionCombo.addItems(self.precision_list)
-
-        precisionBoxLayout.addWidget(self.precisionCombo)
-        #valueBoxLayout.addStretch(1)
-        precisionBox.setLayout(precisionBoxLayout)
+        self.precisionCombo.setEnabled(False)
         self.precisionCombo.activated[str].connect(self.set_precision)
+
+        self.validate_values_btn = QPushButton("Validate")
+        self.validate_values_btn.setToolTip("Validate format of Measured data GSI words")
+        self.validate_values_btn.clicked.connect(functools.partial(self.parent()._validate_gsi_objects, True))
+        self.validate_values_btn.setEnabled(False)
+        tools_box_layout.addWidget( self.validate_values_btn, 0,1)
+
+        label = QLabel("Change Precision")
+        tools_box_layout.addWidget(label,1,0)
+        tools_box_layout.addWidget(self.precisionCombo, 1, 1)
+        tools_box.setLayout(tools_box_layout)
+
 
 
         controlBoxHboxLayout = QHBoxLayout()
-        controlBoxHboxLayout.addWidget(commandBox)
-        controlBoxHboxLayout.addSpacing(40)
         controlBoxHboxLayout.addWidget(fileBox)
         controlBoxHboxLayout.addSpacing(40)
-        controlBoxHboxLayout.addWidget(precisionBox)
+        controlBoxHboxLayout.addWidget(tools_box)
         controlBoxHboxLayout.addStretch(1)
         mainWidgetVboxLayout.addLayout(controlBoxHboxLayout)
 
-        # Table widget        
-        self.tableWidget = QTableWidget()
-        self.tableWidget.setRowCount(30)
+        # Table widget
+        self.tableWidget = GsiTableWidget(self)
+        #self.tableWidget.setRowCount(30)
         self.tableWidget.setColumnCount(8)
         
         # Header stylesheet
@@ -438,7 +527,7 @@ class MainWidget(QWidget):
         self.tableWidget.setStyleSheet(stylesheet)
            
         
-        self.tableWidget.setHorizontalHeaderLabels(["Punkt ID", "Y-koordinat", "X-koordinat", "Höjd över havet", "Kod", "Attribut 1", "Attribut 2", "Attribut 3"])
+        self.tableWidget.setHorizontalHeaderLabels(["Pointnumber", "Y-coordinate", "X-coordinate", "Elevation", "Code", "Attribute 1", "Attribute 2", "Attribute 3"])
         font = QFont()
         font.setItalic(True)
         font.setPointSize(10)
@@ -459,22 +548,7 @@ class MainWidget(QWidget):
         self.setPalette(pal)
 
         self.setAutoFillBackground(True)
-        self.setWindowTitle('Buttons')     
-        
-    def delete_row(self):        
-        rows = self.tableWidget.selectionModel().selectedRows()
-        if len(rows) != 0:
-            for selRow in rows:
-                #pointNoRawStr = self.tableWidget.item(selRow.row(), 0).raw_word_str
-                #self.parent().remove_gsi_object(pointNoRawStr)
-                self.tableWidget.removeRow(selRow.row())
-    
-    def add_row(self):
-        rows = self.tableWidget.selectionModel().selectedRows()
-        if len(rows) != 0:
-            self.tableWidget.insertRow(rows[0].row())
-        else:
-            self.tableWidget.insertRow(self.tableWidget.rowCount())
+        self.setWindowTitle('Buttons')
 
     def clearTable(self):
         for i in reversed(range(self.tableWidget.rowCount())):
@@ -482,39 +556,19 @@ class MainWidget(QWidget):
 
 
     def fillTable(self, gsi_objects):
-        precision_val = 3
         self.tableWidget.setRowCount(len(gsi_objects))
         for idx, gsiObj in enumerate(gsi_objects):
             for posIdx, word in enumerate(gsiObj.gsi_words):
-                # Create new Item here
-                self.tableWidget.setItem(idx, posIdx, QTableWidgetItem(word.value_string))
-                if idx == 0 and word.word_index == "81":
-                    precision_val = word.precision
-                    self.parent().precision = precision_val
-
-        self.set_precision(self.precision_strs[self.parent().precision])
-
-
-        # Set precision value in combobox
-        self.precisionCombo.setCurrentText(self.precision_strs[precision_val])
-                
-    def _print_widget_content(self):
-        for idx in range(0, self.tableWidget.rowCount() -2):
-            for posIdx in range(0, self.tableWidget.columnCount()-1):     
-                if len(self.tableWidget.item(idx, posIdx).text()) != 0:
-                    print(self.tableWidget.item(idx, posIdx).text())
+                # Add new Item (GSI Word) here
+                self.tableWidget.setItem(idx, posIdx, word)
 
     def set_precision(self, precision):
         for row in range(self.tableWidget.rowCount()):
             for column in range(1, 4):
-                current_value = Decimal(float(self.tableWidget.item(row, column).text()))
-                new_value = Decimal(current_value.quantize(Decimal(precision), rounding=ROUND_HALF_UP))
-                self.tableWidget.item(row, column).setText(str(new_value))
+                self.tableWidget.item(row, column).set_precision(precision)
                 self.parent().precision = len(precision.split(".")[1])
         
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     mainWin = CoEditorMainWin()
     sys.exit(app.exec_())
-
-#     sys.exit(main())

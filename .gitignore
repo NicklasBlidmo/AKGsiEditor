@@ -76,4 +76,5 @@ build/
 coordinate_editor.spec
 coordinate_editor.zip
 dist/
+*.spec
 
