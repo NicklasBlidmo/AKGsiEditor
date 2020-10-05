@@ -1,15 +1,16 @@
-Programmet kan hantera Leicas GSI-filer i GSI16-format
+This editor can manage Leica GSI-files in GSI16-format
 
 
-När en fil är öppnad i programmet kan följande operationer utföras:
+When a file is opened following operations can be executed:
 
-Ctrl+C 		- Kopierar markerade rader eller celler. Dessa hamnar också i windows "Clipboard" och kan klistras in i andra program som t.ex. Excel
-Ctrl-V 		- Klistrar in (skriver över) från "Clipboard" vid markering, dvs inom programmet och från andra program. Observera 
-Ins (Insert) 	- Lägger till en ny rad ovanför markerad rad. Om ingen rad är markerad läggs en rad till längst ner
-Shift+Ins 	- Lägger till en ny rad ovanför markerad rad. Om ingen rad är markerad läggs en rad till längst ner
+Ctrl+C 		- Copy selected rows/cells to Clipboard which can be pasted in the editor or other programs such as Excel.
+Ctrl-V 		- Paste (overwrite) from "Clipboard" at the selected area in the table. 
 
-Observera: Så många rader läggs till som det antal rader man har markerat: 
+Ins (Insert) 	- Add a new row above the selected row. If no row is selelected a new row is added at the end of the table
+Shift+Ins 	- Add a new row below the selected row. If no row is selelected a new row is added at the end of the table
 
-Knapppen "Validate" 		- Validerar att cellerna har rätt format. Attribut och kod valideras inte
-Knapppen "Change Precision" 	- Ändrar antal decimaler för X, Y och höjd
-Knappen "Save file"		- Spara den editerade filen i GSI16-format, den kommer valideras automatiskt innan.
+Note: Note the number of added rows are equal to number of rows selected
+
+Button "Validate" 		- Validates Measured data words (X, Y, Altitude)
+Button "Change Precision" 	- Changes number of decimals for X, Y and altitude
+Button "Save file"		- Save the edited file in Leics GSI16 format (It will be validated prior to saving)
